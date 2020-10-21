@@ -17,51 +17,75 @@ app.locals.users = {
 
 app.post('/login', (req, resp) => {
 
-  let { userName, pw } = req.body;
-  if (!verify([{userName, pw}])) resp.sendStatus(400);
+  let { name, pw } = req.body;
+  if (!verify({name, pw})) resp.status(403).json('Wrong User ID or PW');
 
   let newKey = Math.floor(Math.random() * 10000);
-  app.locals.users[userName].authKey = newKey
+  app.locals.users[name].authKey = newKey
   resp.status(200).json(newKey);
 });
 
+
 app.post('/logout', (req, resp) => {
 
-  let {userName, authKey} = req.body;
-  if (!verify([{userName, authKey}])) resp.sendStatus(400);
+  let {name, authKey} = req.body;
+  if (!verify({name, authKey})) resp.status(403).json('Invalid Certification');
 
-  app.locals.users[userName].authKey = null;
+  app.locals.users[name].authKey = null;
   resp.sendStatus(204);
 });
 
+
 app.post('/game', (req, resp) => {
   let { users } = req.body;
-  if (!verify(users)) return resp.sendStatus(400);
+  if (!verifyAll(users)) return resp.status(400).json('Invalid User Data');
 
+  users = users.map( user => {
+    user.displayName = app.locals.users[user.name].displayName;
+    return user;
+  })
   let game = new Game(users);
-  if (game.error) return resp.sendStatus(400);
+  if (game.error) return resp.status(400).json('Game.players error');
 
   users.forEach( user => {
     app.locals.users[user.name].game = game
   })
   resp.status(201).json(game.id);
-})
+});
+
+app.post('/turn', (req, resp) => {
+  let { name, authKey, move } = req.body;
+  if (!verify({ name, authKey })) return resp.status(400).json("Not Authorized");
+
+  let game = app.locals.users[name].game;
+  if ( game === null ) return resp.status(400).json("No ongoing game");
+  if ( game.current.name !== name ) resp.status(400).json("Not current player");
+
+  let turn = game.takeTurn(move);
+  if (turn.isOver) game.players.forEach( player => app.locals.users[player.name].game = null);
+
+  return resp.status(200).json(turn.message);
+});
+
 
 app.listen(app.get('port'), () => {
   console.log(`${app.locals.title} is hosting on ${app.get('port')}`);
 });
 
-function verify(users) {
-  for (let i = 0; i < users.length; i++) {
-    let {userName, pw, authKey} = users[i];
-    let userDoesntExist = app.locals.users[userName] === undefined;
-    let pwMatches = app.locals.users[userName].pw === pw;
-    let authKeyMatches = app.locals.users[userName].authKey == authKey && authKey !== null;
-    if ( userDoesntExist || !(pwMatches || authKeyMatches)) {
-      return false;
-    }
-  }
+
+function verify(user) {
+  let {name, pw, authKey} = user;
+  if (app.locals.users[name] === undefined) return false;
+
+  let correctPW = app.locals.users[name].pw === pw;
+  let isAuthed = app.locals.users[name].authKey === authKey && authKey !== null;
+  if (!(correctPW || isAuthed)) return false;
   return true;
 }
 
-// console.log(verify([{ "userName": "bill@bb.com", "authKey": 7352}]));
+function verifyAll(users) {
+  for (let i = 0; i < users.length; i++) {
+    if (!verify(users[i])) return false;
+  }
+  return true;
+}
